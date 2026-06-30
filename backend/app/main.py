@@ -21,6 +21,7 @@ class JobState:
     job_id: str
     repo_url: str
     goal: str
+    language: str
     status: JobStatus
     message: str
     error: str | None = None
@@ -40,6 +41,10 @@ app.add_middleware(
 )
 
 
+def localized(language: str, zh: str, en: str) -> str:
+    return en if language == "en" else zh
+
+
 @app.on_event("startup")
 def ensure_docs_dir() -> None:
     settings.docs_path.mkdir(parents=True, exist_ok=True)
@@ -56,9 +61,15 @@ def generate(request: GenerateRequest) -> GenerateResponse:
     jobs[job_id] = JobState(
         job_id=job_id,
         repo_url=repo_url,
-        goal=(request.goal or "").strip() or "生成适合学习、复习和面试准备的项目文档。",
+        goal=(request.goal or "").strip()
+        or localized(
+            request.language,
+            "生成适合学习、复习和面试准备的项目文档。",
+            "Generate project documents for learning, review, resume preparation, and interview practice.",
+        ),
+        language=request.language,
         status=JobStatus.queued,
-        message="任务已创建，等待处理。",
+        message=localized(request.language, "任务已创建，等待处理。", "Task created and waiting to run."),
     )
     executor.submit(run_job, job_id)
     return GenerateResponse(job_id=job_id, status=JobStatus.queued)
@@ -75,7 +86,7 @@ def status(job_id: str) -> JobResponse:
         status=job.status,
         message=job.message,
         error=job.error,
-        documents=read_documents(job_id) if job.status == JobStatus.completed else [],
+        documents=read_documents(job_id, job.language) if job.status == JobStatus.completed else [],
     )
 
 
@@ -99,6 +110,7 @@ def chat(request: ChatRequest) -> ChatResponse:
             messages=request.messages,
             document_title=request.document_title,
             document_content=request.document_content,
+            language=request.language,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -117,20 +129,28 @@ def run_job(job_id: str) -> None:
     repo_root: Path | None = None
     job = jobs[job_id]
     try:
-        update_job(job_id, JobStatus.cloning, "正在 clone GitHub repo。")
+        update_job(job_id, JobStatus.cloning, localized(job.language, "正在 clone GitHub repo。", "Cloning the GitHub repository."))
         repo_root = clone_repo(job.repo_url)
 
-        update_job(job_id, JobStatus.analyzing, "正在扫描 README、目录结构、配置文件和关键源码。")
+        update_job(
+            job_id,
+            JobStatus.analyzing,
+            localized(job.language, "正在扫描 README、目录结构、配置文件和关键源码。", "Scanning the README, file tree, config files, and key source code."),
+        )
         snapshot = build_snapshot(repo_root, settings.max_file_bytes, settings.max_total_chars)
         summary = analyze_snapshot(snapshot)
 
-        update_job(job_id, JobStatus.generating, "Agent 正在根据目标选择工具并生成 Markdown 文档。")
-        documents = generate_documents(summary, job.repo_url, job.goal)
+        update_job(
+            job_id,
+            JobStatus.generating,
+            localized(job.language, "Agent 正在根据目标选择工具并生成 Markdown 文档。", "The agent is selecting tools and generating Markdown documents for your goal."),
+        )
+        documents = generate_documents(summary, job.repo_url, job.goal, job.language)
         save_documents(job_id, documents)
 
-        update_job(job_id, JobStatus.completed, "文档已生成。")
+        update_job(job_id, JobStatus.completed, localized(job.language, "文档已生成。", "Documents generated."))
     except Exception as exc:
-        update_job(job_id, JobStatus.failed, "生成失败。", str(exc))
+        update_job(job_id, JobStatus.failed, localized(job.language, "生成失败。", "Generation failed."), str(exc))
     finally:
         if repo_root is not None:
             cleanup_repo(repo_root)

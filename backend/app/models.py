@@ -16,6 +16,7 @@ class JobStatus(str, Enum):
 class GenerateRequest(BaseModel):
     repo_url: HttpUrl
     goal: str | None = None
+    language: Literal["zh", "en"] = "zh"
 
 
 class GenerateResponse(BaseModel):
@@ -50,6 +51,7 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = []
     document_title: str | None = None
     document_content: str | None = None
+    language: Literal["zh", "en"] = "zh"
 
 
 class ChatResponse(BaseModel):
