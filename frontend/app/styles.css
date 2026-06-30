@@ -19,21 +19,11 @@
   box-sizing: border-box;
 }
 
-html,
-body {
-  height: 100%;
-}
-
-html {
-  overflow: hidden;
-}
-
 body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
   font-family: Arial, Helvetica, sans-serif;
-  overflow: hidden;
 }
 
 button,
@@ -284,7 +274,7 @@ pre {
 }
 
 body {
-  height: 100vh;
+  min-height: 100vh;
   background:
     radial-gradient(circle at top left, rgba(255, 209, 196, 0.55), transparent 30%),
     linear-gradient(180deg, #fff8f5 0%, #fffaf8 48%, #f7fbfa 100%);
@@ -330,12 +320,8 @@ button:disabled {
 
 .shell {
   width: min(1240px, calc(100vw - 36px));
-  height: 100vh;
   margin: 0 auto;
-  padding: 18px 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
+  padding: 28px 0 42px;
 }
 
 .hero {
@@ -446,18 +432,14 @@ h2 {
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
-  align-items: stretch;
+  align-items: start;
   gap: 18px;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .leftColumn {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
-  min-height: 0;
 }
 
 .generator,
@@ -582,10 +564,6 @@ textarea:focus {
 }
 
 .resultArea {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
   padding: 14px 18px;
 }
 
@@ -606,11 +584,62 @@ textarea:focus {
   line-height: 1.5;
 }
 
+.agentActivity {
+  margin-top: 14px;
+  border: 1px solid #f0ddd6;
+  border-radius: 8px;
+  background: #fff7f3;
+  padding: 14px;
+}
+
+.agentActivity header {
+  margin-bottom: 10px;
+}
+
+.agentActivity h2 {
+  font-size: 18px;
+}
+
+.agentEventList {
+  display: grid;
+  gap: 7px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+  padding: 10px;
+}
+
+.agentEventList p {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  color: #352522;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.agentEventList span {
+  flex: 0 0 auto;
+  min-width: 24px;
+  color: var(--accent-strong);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agentTraceEmpty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .docsLayout {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
   gap: 16px;
-  min-height: 0;
   padding-top: 10px;
 }
 
@@ -618,7 +647,6 @@ textarea:focus {
   display: grid;
   align-content: start;
   gap: 8px;
-  overflow: auto;
 }
 
 .docTabs button {
@@ -637,10 +665,7 @@ textarea:focus {
 }
 
 .docViewer {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
-  min-height: 0;
 }
 
 .docViewer header {
@@ -659,8 +684,8 @@ textarea:focus {
 }
 
 pre {
-  min-height: 0;
-  max-height: none;
+  min-height: 430px;
+  max-height: 680px;
   overflow: auto;
   margin: 0;
   border: 1px solid var(--line);
@@ -697,12 +722,12 @@ pre {
 }
 
 .chatPanel {
+  position: sticky;
+  top: 18px;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(320px, 58vh) auto auto;
   gap: 12px;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
+  min-height: 620px;
   padding: 14px;
 }
 
@@ -835,6 +860,7 @@ pre {
 
   .jobInfo,
   .docViewer header,
+  .agentActivity header,
   .chatHeader {
     display: grid;
   }

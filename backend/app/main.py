@@ -25,6 +25,7 @@ class JobState:
     status: JobStatus
     message: str
     error: str | None = None
+    agent_events: list[str] | None = None
 
 
 app = FastAPI(title="Repo Learning Agent API")
@@ -70,6 +71,7 @@ def generate(request: GenerateRequest) -> GenerateResponse:
         language=request.language,
         status=JobStatus.queued,
         message=localized(request.language, "任务已创建，等待处理。", "Task created and waiting to run."),
+        agent_events=[localized(request.language, "任务已创建，等待开始。", "Task created and waiting to start.")],
     )
     executor.submit(run_job, job_id)
     return GenerateResponse(job_id=job_id, status=JobStatus.queued)
@@ -87,6 +89,8 @@ def status(job_id: str) -> JobResponse:
         message=job.message,
         error=job.error,
         documents=read_documents(job_id, job.language) if job.status == JobStatus.completed else [],
+        agent_trace=None,
+        agent_events=job.agent_events or [],
     )
 
 
@@ -125,12 +129,23 @@ def update_job(job_id: str, status_value: JobStatus, message: str, error: str | 
     job.error = error
 
 
+def add_job_event(job_id: str, message: str) -> None:
+    job = jobs[job_id]
+    if job.agent_events is None:
+        job.agent_events = []
+    if not job.agent_events or job.agent_events[-1] != message:
+        job.agent_events.append(message)
+    job.agent_events = job.agent_events[-80:]
+
+
 def run_job(job_id: str) -> None:
     repo_root: Path | None = None
     job = jobs[job_id]
     try:
         update_job(job_id, JobStatus.cloning, localized(job.language, "正在 clone GitHub repo。", "Cloning the GitHub repository."))
+        add_job_event(job_id, localized(job.language, "连接 GitHub，准备读取仓库。", "Connecting to GitHub and preparing to read the repository."))
         repo_root = clone_repo(job.repo_url)
+        add_job_event(job_id, localized(job.language, "仓库已克隆，开始扫描关键文件。", "Repository cloned. Scanning key files."))
 
         update_job(
             job_id,
@@ -139,15 +154,24 @@ def run_job(job_id: str) -> None:
         )
         snapshot = build_snapshot(repo_root, settings.max_file_bytes, settings.max_total_chars)
         summary = analyze_snapshot(snapshot)
+        add_job_event(
+            job_id,
+            localized(
+                job.language,
+                f"识别到项目 {summary.repo_name}，准备让 Agent 选择工具读取材料。",
+                f"Identified project {summary.repo_name}. Preparing the agent to inspect materials with tools.",
+            ),
+        )
 
         update_job(
             job_id,
             JobStatus.generating,
             localized(job.language, "Agent 正在根据目标选择工具并生成 Markdown 文档。", "The agent is selecting tools and generating Markdown documents for your goal."),
         )
-        documents = generate_documents(summary, job.repo_url, job.goal, job.language)
+        documents = generate_documents(summary, job.repo_url, job.goal, job.language, event_callback=lambda event: add_job_event(job_id, event))
         save_documents(job_id, documents)
 
+        add_job_event(job_id, localized(job.language, "三份文档已保存，生成流程完成。", "Three documents saved. Generation complete."))
         update_job(job_id, JobStatus.completed, localized(job.language, "文档已生成。", "Documents generated."))
     except Exception as exc:
         update_job(job_id, JobStatus.failed, localized(job.language, "生成失败。", "Generation failed."), str(exc))

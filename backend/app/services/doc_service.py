@@ -8,17 +8,15 @@ DOC_TITLES = {
         "learning_guide": "学习路线",
         "daily_plan": "每日学习计划",
         "interview_questions": "面试问题",
-        "agent_trace": "Agent 执行轨迹",
     },
     "en": {
         "learning_guide": "Learning Guide",
         "daily_plan": "Daily Study Plan",
         "interview_questions": "Interview Questions",
-        "agent_trace": "Agent Trace",
     },
 }
 
-DOC_TYPES = set(DOC_TITLES["zh"])
+DOC_TYPES = set(DOC_TITLES["zh"]) | {"agent_trace"}
 
 
 def save_documents(job_id: str, documents: dict[str, str]) -> dict[str, Path]:
@@ -50,6 +48,13 @@ def read_documents(job_id: str, language: str = "zh") -> list[dict[str, str]]:
                 }
             )
     return result
+
+
+def read_agent_trace(job_id: str) -> str | None:
+    path = settings.docs_path / job_id / "agent_trace.md"
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
 
 
 def get_document_path(job_id: str, doc_type: str) -> Path:

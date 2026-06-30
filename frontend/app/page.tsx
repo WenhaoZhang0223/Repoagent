@@ -6,7 +6,7 @@ type JobStatus = "queued" | "cloning" | "analyzing" | "generating" | "completed"
 type Language = "zh" | "en";
 
 type DocumentPayload = {
-  name: "learning_guide" | "daily_plan" | "interview_questions" | "agent_trace";
+  name: "learning_guide" | "daily_plan" | "interview_questions";
   title: string;
   filename: string;
   content: string;
@@ -20,6 +20,8 @@ type JobResponse = {
   message: string;
   error?: string | null;
   documents: DocumentPayload[];
+  agent_trace?: string | null;
+  agent_events: string[];
 };
 
 type ChatMessage = {
@@ -74,7 +76,10 @@ const copy = {
     thinking: "正在思考...",
     chatPlaceholder: "问任何问题，也可以问当前文档...",
     send: "发送",
-    taskSubmitted: "任务已提交。"
+    taskSubmitted: "任务已提交。",
+    agentActivityTitle: "任务进行中",
+    agentActivitySubtitle: "",
+    agentActivityEmpty: "等待 Agent 开始执行..."
   },
   en: {
     languageName: "English",
@@ -120,7 +125,10 @@ const copy = {
     thinking: "Thinking...",
     chatPlaceholder: "Ask anything, including questions about the current document...",
     send: "Send",
-    taskSubmitted: "Task submitted."
+    taskSubmitted: "Task submitted.",
+    agentActivityTitle: "Task In Progress",
+    agentActivitySubtitle: "",
+    agentActivityEmpty: "Waiting for the agent to start..."
   }
 } satisfies Record<
   Language,
@@ -162,6 +170,9 @@ const copy = {
     chatPlaceholder: string;
     send: string;
     taskSubmitted: string;
+    agentActivityTitle: string;
+    agentActivitySubtitle: string;
+    agentActivityEmpty: string;
   }
 >;
 
@@ -187,6 +198,7 @@ export default function Home() {
   const [chatError, setChatError] = useState("");
   const [isChatting, setIsChatting] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const agentEventEndRef = useRef<HTMLDivElement | null>(null);
 
   const activeDocument = useMemo(
     () => job?.documents.find((doc) => doc.name === activeDoc) || job?.documents[0],
@@ -214,6 +226,10 @@ export default function Home() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [chatMessages, isChatting]);
+
+  useEffect(() => {
+    agentEventEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [job?.agent_events.length]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -263,7 +279,9 @@ export default function Home() {
         repo_url: repoUrl,
         status: payload.status,
         message: t.taskSubmitted,
-        documents: []
+        documents: [],
+        agent_trace: null,
+        agent_events: []
       });
       setChatMessages([
         {
@@ -315,6 +333,7 @@ export default function Home() {
   }
 
   const hasDocuments = Boolean(job?.documents.length);
+  const showAgentActivity = Boolean(job && job.status !== "completed" && job.status !== "failed");
 
   return (
     <main className="shell" lang={language}>
@@ -404,6 +423,27 @@ export default function Home() {
               </div>
               <p>{job ? job.error || job.message : t.waitingText}</p>
             </div>
+
+            {showAgentActivity && (
+              <section className="agentActivity" aria-label={t.agentActivityTitle}>
+                <header>
+                  <h2>{t.agentActivityTitle}</h2>
+                </header>
+                <div className="agentEventList">
+                  {job?.agent_events.length ? (
+                    job.agent_events.map((event, index) => (
+                      <p key={`${event}-${index}`}>
+                        <span>{String(index + 1).padStart(2, "0")}</span>
+                        {event}
+                      </p>
+                    ))
+                  ) : (
+                    <p className="agentTraceEmpty">{t.agentActivityEmpty}</p>
+                  )}
+                  <div ref={agentEventEndRef} />
+                </div>
+              </section>
+            )}
 
             {hasDocuments ? (
               <div className="docsLayout">

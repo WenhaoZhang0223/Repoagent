@@ -84,7 +84,9 @@ def validate_github_url(repo_url: str) -> str:
 
 
 def clone_repo(repo_url: str) -> Path:
-    temp_dir = Path(tempfile.mkdtemp(prefix="repoagent_"))
+    clone_root = Path(__file__).resolve().parents[3] / ".runtime" / "repo_clones"
+    clone_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix="repoagent_", dir=clone_root))
     target = temp_dir / "repo"
     try:
         subprocess.run(

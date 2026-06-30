@@ -25,7 +25,7 @@ class GenerateResponse(BaseModel):
 
 
 class DocumentPayload(BaseModel):
-    name: Literal["learning_guide", "daily_plan", "interview_questions", "agent_trace"]
+    name: Literal["learning_guide", "daily_plan", "interview_questions"]
     title: str
     filename: str
     content: str
@@ -39,6 +39,8 @@ class JobResponse(BaseModel):
     message: str
     error: str | None = None
     documents: list[DocumentPayload] = []
+    agent_trace: str | None = None
+    agent_events: list[str] = []
 
 
 class ChatMessage(BaseModel):

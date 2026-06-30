@@ -10,7 +10,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+    openai_model: str = Field(default="deepseek-chat", alias="OPENAI_MODEL")
     openai_base_url: str = Field(default="", alias="OPENAI_BASE_URL")
     use_mock_llm: bool = Field(default=False, alias="USE_MOCK_LLM")
     frontend_origin: str = Field(default="http://localhost:3000", alias="FRONTEND_ORIGIN")

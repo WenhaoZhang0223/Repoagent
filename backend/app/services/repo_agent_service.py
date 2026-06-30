@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
@@ -136,7 +136,32 @@ def _content_to_text(content: Any) -> str:
     return str(content)
 
 
-def _run_agent(llm: ChatOpenAI, summary: ProjectSummary, repo_url: str, goal: str, language: str) -> AgentRun:
+def _event_text(language: str, zh: str, en: str) -> str:
+    return en if language == "en" else zh
+
+
+def _describe_tool_call(tool_name: str, args: dict[str, Any], language: str) -> str:
+    if tool_name == "inspect_repo_overview":
+        return _event_text(language, "查看仓库概览和技术栈。", "Inspecting the repository overview and tech stack.")
+    if tool_name == "list_available_files":
+        return _event_text(language, "列出可读取的关键文件。", "Listing key files available to inspect.")
+    if tool_name == "read_repo_file":
+        path = str(args.get("path", "")).strip() or "unknown"
+        return _event_text(language, f"读取文件：{path}", f"Reading file: {path}")
+    if tool_name == "record_finding":
+        topic = str(args.get("topic", "")).strip() or "finding"
+        return _event_text(language, f"记录关键发现：{topic}", f"Recording key finding: {topic}")
+    return _event_text(language, f"调用工具：{tool_name}", f"Calling tool: {tool_name}")
+
+
+def _run_agent(
+    llm: ChatOpenAI,
+    summary: ProjectSummary,
+    repo_url: str,
+    goal: str,
+    language: str,
+    event_callback: Callable[[str], None] | None = None,
+) -> AgentRun:
     files = _selected_files(summary)
     findings: list[dict[str, str]] = []
     trace: list[str] = []
@@ -156,6 +181,9 @@ def _run_agent(llm: ChatOpenAI, summary: ProjectSummary, repo_url: str, goal: st
         ),
     ]
 
+    if event_callback:
+        event_callback(_event_text(language, "Agent 开始根据目标选择需要查看的仓库材料。", "The agent is choosing which repository materials to inspect."))
+
     for _ in range(8):
         message = tool_calling_llm.invoke(messages)
         messages.append(message)
@@ -167,6 +195,8 @@ def _run_agent(llm: ChatOpenAI, summary: ProjectSummary, repo_url: str, goal: st
             tool_name = call["name"]
             args = call.get("args") or {}
             trace.append(f"{tool_name}({json.dumps(args, ensure_ascii=False)})")
+            if event_callback:
+                event_callback(_describe_tool_call(tool_name, args, language))
             selected_tool = tool_map.get(tool_name)
             if selected_tool is None:
                 result = json.dumps({"error": f"Unknown tool: {tool_name}"}, ensure_ascii=False)
@@ -265,7 +295,13 @@ def _agent_trace_document(run: AgentRun, language: str) -> str:
     )
 
 
-def generate_documents(summary: ProjectSummary, repo_url: str, goal: str | None = None, language: str = "zh") -> dict[str, str]:
+def generate_documents(
+    summary: ProjectSummary,
+    repo_url: str,
+    goal: str | None = None,
+    language: str = "zh",
+    event_callback: Callable[[str], None] | None = None,
+) -> dict[str, str]:
     normalized_language = language if language in LANGUAGE_INSTRUCTIONS else "zh"
     default_goal = (
         "Generate project documents for learning, review, resume preparation, and interview practice."
@@ -275,11 +311,15 @@ def generate_documents(summary: ProjectSummary, repo_url: str, goal: str | None 
     resolved_goal = (goal or "").strip() or default_goal
 
     if settings.use_mock_llm:
+        if event_callback:
+            event_callback(_event_text(normalized_language, "mock 模式：使用演示数据生成文档。", "Mock mode: generating documents from demo data."))
         return _mock_documents(summary, repo_url, resolved_goal, normalized_language)
 
     agent_llm = _build_llm(temperature=0.2)
     document_llm = _build_llm(temperature=0.4)
-    run = _run_agent(agent_llm, summary, repo_url, resolved_goal, normalized_language)
+    run = _run_agent(agent_llm, summary, repo_url, resolved_goal, normalized_language, event_callback)
+    if event_callback:
+        event_callback(_event_text(normalized_language, "整理工具结果，生成三份 Markdown 文档。", "Organizing tool results and generating three Markdown documents."))
     documents = _generate_final_documents(document_llm, summary, repo_url, run, normalized_language)
     documents["agent_trace"] = _agent_trace_document(run, normalized_language)
     return documents
