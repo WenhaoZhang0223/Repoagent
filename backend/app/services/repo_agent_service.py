@@ -2,7 +2,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from openai import OpenAI
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import BaseTool, tool
+from langchain_openai import ChatOpenAI
 
 from app.config import settings
 from app.services.analyzer_service import ProjectSummary
@@ -28,56 +30,6 @@ LANGUAGE_INSTRUCTIONS = {
     "en": "Write all final Markdown documents in clear, natural English.",
 }
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "inspect_repo_overview",
-            "description": "Read the repository name, inferred tech stack, and top-level file tree.",
-            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_available_files",
-            "description": "List files that were selected as useful context for the model.",
-            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_repo_file",
-            "description": "Read one selected repository file by path.",
-            "parameters": {
-                "type": "object",
-                "properties": {"path": {"type": "string", "description": "Repository-relative file path."}},
-                "required": ["path"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "record_finding",
-            "description": "Record a concrete finding from inspected repository material.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string"},
-                    "finding": {"type": "string"},
-                    "evidence": {"type": "string"},
-                },
-                "required": ["topic", "finding", "evidence"],
-                "additionalProperties": False,
-            },
-        },
-    },
-]
-
-
 SYSTEM_PROMPT = """
 You are Repo Learning Agent.
 Your job is to inspect a GitHub repository through tools, decide what information is needed,
@@ -99,14 +51,18 @@ class AgentRun:
     trace: list[str]
 
 
-def _create_client() -> OpenAI:
+def _build_llm(temperature: float) -> ChatOpenAI:
     if not settings.openai_api_key:
         raise RuntimeError("The backend is missing OPENAI_API_KEY. Configure backend/.env or set USE_MOCK_LLM=true.")
 
-    client_kwargs = {"api_key": settings.openai_api_key}
+    client_kwargs = {
+        "api_key": settings.openai_api_key,
+        "model": settings.openai_model,
+        "temperature": temperature,
+    }
     if settings.openai_base_url:
         client_kwargs["base_url"] = settings.openai_base_url
-    return OpenAI(**client_kwargs)
+    return ChatOpenAI(**client_kwargs)
 
 
 def _selected_files(summary: ProjectSummary) -> dict[str, str]:
@@ -131,8 +87,10 @@ def _selected_files(summary: ProjectSummary) -> dict[str, str]:
     return files
 
 
-def _tool_result(summary: ProjectSummary, files: dict[str, str], findings: list[dict[str, str]], name: str, args: dict[str, Any]) -> str:
-    if name == "inspect_repo_overview":
+def _build_tools(summary: ProjectSummary, files: dict[str, str], findings: list[dict[str, str]]) -> list[BaseTool]:
+    @tool
+    def inspect_repo_overview() -> str:
+        """Read the repository name, inferred tech stack, and top-level file tree."""
         return json.dumps(
             {
                 "repo_name": summary.repo_name,
@@ -142,69 +100,84 @@ def _tool_result(summary: ProjectSummary, files: dict[str, str], findings: list[
             ensure_ascii=False,
         )
 
-    if name == "list_available_files":
+    @tool
+    def list_available_files() -> str:
+        """List files that were selected as useful context for the model."""
         return json.dumps({"files": list(files.keys())}, ensure_ascii=False)
 
-    if name == "read_repo_file":
-        path = str(args.get("path", "")).strip()
+    @tool
+    def read_repo_file(path: str) -> str:
+        """Read one selected repository file by repository-relative path."""
+        path = path.strip()
         content = files.get(path)
         if content is None:
             return json.dumps({"error": f"File is not available: {path}", "available_files": list(files.keys())}, ensure_ascii=False)
         return json.dumps({"path": path, "content": content[:12000]}, ensure_ascii=False)
 
-    if name == "record_finding":
+    @tool
+    def record_finding(topic: str, finding: str, evidence: str) -> str:
+        """Record a concrete finding from inspected repository material."""
         finding = {
-            "topic": str(args.get("topic", "")).strip(),
-            "finding": str(args.get("finding", "")).strip(),
-            "evidence": str(args.get("evidence", "")).strip(),
+            "topic": topic.strip(),
+            "finding": finding.strip(),
+            "evidence": evidence.strip(),
         }
         findings.append(finding)
         return json.dumps({"recorded": finding}, ensure_ascii=False)
 
-    return json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False)
+    return [inspect_repo_overview, list_available_files, read_repo_file, record_finding]
 
 
-def _run_agent(client: OpenAI, summary: ProjectSummary, repo_url: str, goal: str, language: str) -> AgentRun:
+def _content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(item.get("text", item)) if isinstance(item, dict) else str(item) for item in content)
+    return str(content)
+
+
+def _run_agent(llm: ChatOpenAI, summary: ProjectSummary, repo_url: str, goal: str, language: str) -> AgentRun:
     files = _selected_files(summary)
     findings: list[dict[str, str]] = []
     trace: list[str] = []
+    tools = _build_tools(summary, files, findings)
+    tool_map = {item.name: item for item in tools}
+    tool_calling_llm = llm.bind_tools(tools)
     language_instruction = LANGUAGE_INSTRUCTIONS.get(language, LANGUAGE_INSTRUCTIONS["zh"])
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": (
+    messages: list[BaseMessage] = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(
+            content=(
                 f"Repository: {repo_url}\n"
                 f"User goal: {goal}\n"
                 f"Output language: {language_instruction}\n"
                 "First decide what to inspect, call tools, record findings, then return JSON."
             ),
-        },
+        ),
     ]
 
     for _ in range(8):
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-            temperature=0.2,
-        )
-        message = response.choices[0].message
-        messages.append(message.model_dump(exclude_none=True))
+        message = tool_calling_llm.invoke(messages)
+        messages.append(message)
 
-        if not message.tool_calls:
+        if not isinstance(message, AIMessage) or not message.tool_calls:
             break
 
         for call in message.tool_calls:
-            args = json.loads(call.function.arguments or "{}")
-            trace.append(f"{call.function.name}({json.dumps(args, ensure_ascii=False)})")
+            tool_name = call["name"]
+            args = call.get("args") or {}
+            trace.append(f"{tool_name}({json.dumps(args, ensure_ascii=False)})")
+            selected_tool = tool_map.get(tool_name)
+            if selected_tool is None:
+                result = json.dumps({"error": f"Unknown tool: {tool_name}"}, ensure_ascii=False)
+            else:
+                result = selected_tool.invoke(args)
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": _tool_result(summary, files, findings, call.function.name, args),
-                }
+                ToolMessage(
+                    content=_content_to_text(result),
+                    tool_call_id=call["id"],
+                    name=tool_name,
+                )
             )
 
     return AgentRun(goal=goal, findings=findings, trace=trace)
@@ -225,15 +198,13 @@ def _agent_context(summary: ProjectSummary, run: AgentRun) -> str:
     )
 
 
-def _generate_final_documents(client: OpenAI, summary: ProjectSummary, repo_url: str, run: AgentRun, language: str) -> dict[str, str]:
+def _generate_final_documents(llm: ChatOpenAI, summary: ProjectSummary, repo_url: str, run: AgentRun, language: str) -> dict[str, str]:
     language_instruction = LANGUAGE_INSTRUCTIONS.get(language, LANGUAGE_INSTRUCTIONS["zh"])
-    response = client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
+    response = llm.bind(response_format={"type": "json_object"}).invoke(
+        [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(
+                content=(
                     f"GitHub repo: {repo_url}\n\n"
                     f"User goal: {run.goal}\n\n"
                     f"{language_instruction}\n"
@@ -241,12 +212,10 @@ def _generate_final_documents(client: OpenAI, summary: ProjectSummary, repo_url:
                     f"Document specs: {json.dumps(DOC_SPECS, ensure_ascii=False)}\n\n"
                     f"Agent context:\n{_agent_context(summary, run)}"
                 ),
-            },
+            ),
         ],
-        response_format={"type": "json_object"},
-        temperature=0.4,
     )
-    raw = response.choices[0].message.content or "{}"
+    raw = _content_to_text(response.content) or "{}"
     parsed = json.loads(raw)
     return {name: str(parsed.get(name, "")).strip() for name in DOC_SPECS}
 
@@ -308,9 +277,10 @@ def generate_documents(summary: ProjectSummary, repo_url: str, goal: str | None 
     if settings.use_mock_llm:
         return _mock_documents(summary, repo_url, resolved_goal, normalized_language)
 
-    client = _create_client()
-    run = _run_agent(client, summary, repo_url, resolved_goal, normalized_language)
-    documents = _generate_final_documents(client, summary, repo_url, run, normalized_language)
+    agent_llm = _build_llm(temperature=0.2)
+    document_llm = _build_llm(temperature=0.4)
+    run = _run_agent(agent_llm, summary, repo_url, resolved_goal, normalized_language)
+    documents = _generate_final_documents(document_llm, summary, repo_url, run, normalized_language)
     documents["agent_trace"] = _agent_trace_document(run, normalized_language)
     return documents
 
